@@ -316,22 +316,13 @@ export default function AuthForms() {
             local `.env.local` automatically.
           </p>
 
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setMode("signup")}
-              className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
-            >
-              Create Student Account
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {loading ? "Creating admin account..." : "Create Admin Account"}
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={loading}
+            className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? "Creating admin account..." : "Create Admin Account"}
+          </button>
         </form>
       ) : (
         <form onSubmit={handleLogin} className="space-y-4">
