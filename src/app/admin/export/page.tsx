@@ -24,6 +24,7 @@ type ScoreSummary = {
 type Submission = {
   id: string;
   userId: string;
+  exerciseId: string;
 };
 
 type ImportedExerciseDraft = {
@@ -36,12 +37,27 @@ type ImportedExerciseDraft = {
 
 type Material = {
   id: string;
+  title: string;
+  content: string;
   orderIndex: number;
 };
 
 type Exercise = {
   id: string;
   materialId: string;
+  prompt: string;
+  starterCode: string;
+  expectedOutput: string;
+  testCasesJson: string;
+  orderIndex: number;
+};
+
+type EditableExerciseDraft = {
+  id: string;
+  prompt: string;
+  starterCode: string;
+  expectedOutput: string;
+  testCasesJson: string;
   orderIndex: number;
 };
 
@@ -57,6 +73,15 @@ export default function AdminExportPage() {
   const [exerciseDrafts, setExerciseDrafts] = useState<ImportedExerciseDraft[]>([]);
   const [importing, setImporting] = useState(false);
   const [savingImport, setSavingImport] = useState(false);
+  const [editingMaterialId, setEditingMaterialId] = useState<string | null>(null);
+  const [materialEditTitle, setMaterialEditTitle] = useState("");
+  const [materialEditContent, setMaterialEditContent] = useState("");
+  const [materialEditOrderIndex, setMaterialEditOrderIndex] = useState(1);
+  const [exerciseEditDrafts, setExerciseEditDrafts] = useState<
+    EditableExerciseDraft[]
+  >([]);
+  const [savingMaterialEdits, setSavingMaterialEdits] = useState(false);
+  const [deletingMaterialId, setDeletingMaterialId] = useState<string | null>(null);
 
   const { data, isLoading, error } = db.useQuery({
     users: {},
@@ -218,6 +243,171 @@ export default function AdminExportPage() {
       setStatusMessage(`Save error: ${message}`);
     } finally {
       setSavingImport(false);
+    }
+  }
+
+  function beginMaterialEdit(material: Material) {
+    const scopedExercises = existingExercises
+      .filter((exercise) => exercise.materialId === material.id)
+      .sort((a, b) => a.orderIndex - b.orderIndex)
+      .map((exercise) => ({
+        id: exercise.id,
+        prompt: exercise.prompt,
+        starterCode: exercise.starterCode,
+        expectedOutput: exercise.expectedOutput,
+        testCasesJson: exercise.testCasesJson,
+        orderIndex: exercise.orderIndex,
+      }));
+
+    setEditingMaterialId(material.id);
+    setMaterialEditTitle(material.title);
+    setMaterialEditContent(material.content);
+    setMaterialEditOrderIndex(material.orderIndex);
+    setExerciseEditDrafts(scopedExercises);
+  }
+
+  function updateEditableExercise(
+    index: number,
+    field: keyof EditableExerciseDraft,
+    value: string | number,
+  ) {
+    setExerciseEditDrafts((prev) =>
+      prev.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    );
+  }
+
+  function addExerciseDraft() {
+    setExerciseEditDrafts((prev) => [
+      ...prev,
+      {
+        id: crypto.randomUUID(),
+        prompt: "Write your prompt here.",
+        starterCode: "print('')",
+        expectedOutput: "",
+        testCasesJson: '[{"name":"Has print","requiredPatterns":["print("]}]',
+        orderIndex: prev.length + 1,
+      },
+    ]);
+  }
+
+  function removeExerciseDraft(index: number) {
+    setExerciseEditDrafts((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+  }
+
+  async function saveMaterialEdits() {
+    if (!editingMaterialId) return;
+    if (!materialEditTitle.trim()) {
+      setStatusMessage("Material title is required.");
+      return;
+    }
+    if (!materialEditContent.trim()) {
+      setStatusMessage("Material content is required.");
+      return;
+    }
+
+    setSavingMaterialEdits(true);
+    setStatusMessage(null);
+    try {
+      const txChunks: unknown[] = [
+        db.tx.materials[editingMaterialId].update({
+          title: materialEditTitle.trim(),
+          content: materialEditContent.trim(),
+          orderIndex:
+            Number.isFinite(materialEditOrderIndex) && materialEditOrderIndex > 0
+              ? materialEditOrderIndex
+              : 1,
+        }),
+      ];
+
+      for (const draft of exerciseEditDrafts) {
+        txChunks.push(
+          db.tx.exercises[draft.id].update({
+            materialId: editingMaterialId,
+            prompt: draft.prompt.trim(),
+            starterCode: draft.starterCode.trim(),
+            expectedOutput: draft.expectedOutput.trim(),
+            testCasesJson: draft.testCasesJson.trim(),
+            orderIndex: Number.isFinite(draft.orderIndex) && draft.orderIndex > 0
+              ? draft.orderIndex
+              : 1,
+          }),
+        );
+      }
+
+      const existingForMaterial = existingExercises.filter(
+        (exercise) => exercise.materialId === editingMaterialId,
+      );
+      const draftExerciseIds = new Set(exerciseEditDrafts.map((draft) => draft.id));
+
+      for (const existingExercise of existingForMaterial) {
+        if (draftExerciseIds.has(existingExercise.id)) continue;
+        for (const submission of allSubmissions) {
+          if (submission.exerciseId === existingExercise.id) {
+            txChunks.push(db.tx.submissions[submission.id].delete());
+          }
+        }
+        txChunks.push(db.tx.exercises[existingExercise.id].delete());
+      }
+
+      await db.transact(txChunks as never[]);
+      setStatusMessage("Material and exercises updated.");
+      setEditingMaterialId(null);
+      setExerciseEditDrafts([]);
+    } catch (saveError) {
+      const message =
+        saveError instanceof Error ? saveError.message : "Failed to save edits.";
+      setStatusMessage(`Save error: ${message}`);
+    } finally {
+      setSavingMaterialEdits(false);
+    }
+  }
+
+  async function deleteMaterial(material: Material) {
+    if (!session || session.role !== "admin") return;
+
+    const confirmed = window.confirm(
+      `Delete material "${material.title}" and all related exercises/submissions?`,
+    );
+    if (!confirmed) return;
+
+    setDeletingMaterialId(material.id);
+    setStatusMessage(null);
+
+    try {
+      const scopedExercises = existingExercises.filter(
+        (exercise) => exercise.materialId === material.id,
+      );
+      const scopedExerciseIds = new Set(scopedExercises.map((exercise) => exercise.id));
+
+      const txChunks: unknown[] = [];
+      for (const submission of allSubmissions) {
+        if (scopedExerciseIds.has(submission.exerciseId)) {
+          txChunks.push(db.tx.submissions[submission.id].delete());
+        }
+      }
+
+      for (const exercise of scopedExercises) {
+        txChunks.push(db.tx.exercises[exercise.id].delete());
+      }
+
+      txChunks.push(db.tx.materials[material.id].delete());
+      await db.transact(txChunks as never[]);
+
+      if (editingMaterialId === material.id) {
+        setEditingMaterialId(null);
+        setExerciseEditDrafts([]);
+      }
+      setStatusMessage(`Deleted material: ${material.title}`);
+    } catch (deleteError) {
+      const message =
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Failed to delete material.";
+      setStatusMessage(`Delete error: ${message}`);
+    } finally {
+      setDeletingMaterialId(null);
     }
   }
 
@@ -433,6 +623,181 @@ export default function AdminExportPage() {
                 />
               </div>
             ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-4">
+        <h2 className="text-xl font-semibold text-slate-900">Manage Learning Materials</h2>
+        <p className="text-sm text-slate-600">
+          Edit or delete existing materials and their exercises.
+        </p>
+
+        {existingMaterials.length === 0 ? (
+          <p className="text-sm text-slate-600">No materials available yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {existingMaterials
+              .slice()
+              .sort((a, b) => a.orderIndex - b.orderIndex)
+              .map((material) => (
+                <div
+                  key={material.id}
+                  className="rounded-md border border-slate-200 bg-slate-50 p-3"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900">
+                        {material.orderIndex}. {material.title}
+                      </p>
+                      <p className="text-xs text-slate-600">
+                        {existingExercises.filter((e) => e.materialId === material.id).length} exercises
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => beginMaterialEdit(material)}
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={deletingMaterialId === material.id}
+                        onClick={() => deleteMaterial(material)}
+                        className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {deletingMaterialId === material.id ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        )}
+
+        {editingMaterialId ? (
+          <div className="space-y-3 rounded-md border border-indigo-200 bg-indigo-50 p-4">
+            <p className="text-sm font-semibold text-indigo-800">
+              Editing material
+            </p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <input
+                value={materialEditTitle}
+                onChange={(event) => setMaterialEditTitle(event.target.value)}
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                placeholder="Material title"
+              />
+              <input
+                type="number"
+                min={1}
+                value={materialEditOrderIndex}
+                onChange={(event) =>
+                  setMaterialEditOrderIndex(Number(event.target.value || 1))
+                }
+                className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+            <textarea
+              rows={6}
+              value={materialEditContent}
+              onChange={(event) => setMaterialEditContent(event.target.value)}
+              className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+              placeholder="Material content"
+            />
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-slate-800">Exercises</p>
+              {exerciseEditDrafts.map((draft, index) => (
+                <div key={draft.id} className="space-y-2 rounded-md border border-slate-200 bg-white p-3">
+                  <input
+                    value={draft.prompt}
+                    onChange={(event) =>
+                      updateEditableExercise(index, "prompt", event.target.value)
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                    placeholder="Prompt"
+                  />
+                  <textarea
+                    rows={3}
+                    value={draft.starterCode}
+                    onChange={(event) =>
+                      updateEditableExercise(index, "starterCode", event.target.value)
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
+                    placeholder="Starter code"
+                  />
+                  <input
+                    value={draft.expectedOutput}
+                    onChange={(event) =>
+                      updateEditableExercise(index, "expectedOutput", event.target.value)
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                    placeholder="Expected output"
+                  />
+                  <textarea
+                    rows={2}
+                    value={draft.testCasesJson}
+                    onChange={(event) =>
+                      updateEditableExercise(index, "testCasesJson", event.target.value)
+                    }
+                    className="w-full rounded-md border border-slate-300 px-3 py-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
+                    placeholder='[{"name":"...","requiredPatterns":["..."]}]'
+                  />
+                  <div className="flex items-center justify-between">
+                    <input
+                      type="number"
+                      min={1}
+                      value={draft.orderIndex}
+                      onChange={(event) =>
+                        updateEditableExercise(
+                          index,
+                          "orderIndex",
+                          Number(event.target.value || 1),
+                        )
+                      }
+                      className="w-24 rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeExerciseDraft(index)}
+                      className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-50"
+                    >
+                      Remove Exercise
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={addExerciseDraft}
+                className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+              >
+                Add Exercise
+              </button>
+              <button
+                type="button"
+                disabled={savingMaterialEdits}
+                onClick={saveMaterialEdits}
+                className="rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {savingMaterialEdits ? "Saving..." : "Save Material Changes"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingMaterialId(null);
+                  setExerciseEditDrafts([]);
+                }}
+                className="rounded-md border border-slate-300 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         ) : null}
       </section>
