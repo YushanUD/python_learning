@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { db } from "@/lib/db";
+import { db, seedMaterials } from "@/lib/db";
 import { downloadStudentScores } from "@/lib/export";
 import { getSession, type SessionUser } from "@/lib/auth";
 
@@ -127,6 +127,10 @@ export default function AdminExportPage() {
   const allSummaries = (data?.scoreSummaries ?? []) as ScoreSummary[];
   const existingMaterials = (data?.materials ?? []) as Material[];
   const existingExercises = (data?.exercises ?? []) as Exercise[];
+  const protectedMaterialIds = useMemo(
+    () => new Set(seedMaterials.map((material) => material.id)),
+    [],
+  );
 
   function updateExerciseDraft(
     index: number,
@@ -247,6 +251,11 @@ export default function AdminExportPage() {
   }
 
   function beginMaterialEdit(material: Material) {
+    if (protectedMaterialIds.has(material.id)) {
+      setStatusMessage("Core hard-coded material cannot be edited.");
+      return;
+    }
+
     const scopedExercises = existingExercises
       .filter((exercise) => exercise.materialId === material.id)
       .sort((a, b) => a.orderIndex - b.orderIndex)
@@ -366,6 +375,10 @@ export default function AdminExportPage() {
 
   async function deleteMaterial(material: Material) {
     if (!session || session.role !== "admin") return;
+    if (protectedMaterialIds.has(material.id)) {
+      setStatusMessage("Core hard-coded material cannot be deleted.");
+      return;
+    }
 
     const confirmed = window.confirm(
       `Delete material "${material.title}" and all related exercises/submissions?`,
@@ -658,17 +671,25 @@ export default function AdminExportPage() {
                       <button
                         type="button"
                         onClick={() => beginMaterialEdit(material)}
-                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                        className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={protectedMaterialIds.has(material.id)}
                       >
                         Edit
                       </button>
                       <button
                         type="button"
-                        disabled={deletingMaterialId === material.id}
+                        disabled={
+                          deletingMaterialId === material.id ||
+                          protectedMaterialIds.has(material.id)
+                        }
                         onClick={() => deleteMaterial(material)}
                         className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {deletingMaterialId === material.id ? "Deleting..." : "Delete"}
+                        {protectedMaterialIds.has(material.id)
+                          ? "Core Material"
+                          : deletingMaterialId === material.id
+                            ? "Deleting..."
+                            : "Delete"}
                       </button>
                     </div>
                   </div>

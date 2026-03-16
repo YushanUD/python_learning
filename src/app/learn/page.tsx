@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import ExerciseCard from "@/components/ExerciseCard";
 import { getSession, type SessionUser } from "@/lib/auth";
@@ -38,8 +38,6 @@ export default function LearnPage() {
   const router = useRouter();
   const [session] = useState<SessionUser | null>(() => getSession());
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
-  const [seedNotice, setSeedNotice] = useState<string | null>(null);
-  const seededRef = useRef(false);
 
   const { data, isLoading, error } = db.useQuery({
     materials: {},
@@ -64,8 +62,32 @@ export default function LearnPage() {
     [data?.exercises],
   );
 
-  const materials = dbMaterials.length > 0 ? dbMaterials : (seedMaterials as Material[]);
-  const exercises = dbExercises.length > 0 ? dbExercises : (seedExercises as Exercise[]);
+  const seedMaterialIds = useMemo(
+    () => new Set(seedMaterials.map((material) => material.id)),
+    [],
+  );
+  const seedExerciseIds = useMemo(
+    () => new Set(seedExercises.map((exercise) => exercise.id)),
+    [],
+  );
+
+  const materials = useMemo(() => {
+    const customMaterials = dbMaterials.filter(
+      (material) => !seedMaterialIds.has(material.id),
+    );
+    return [...(seedMaterials as Material[]), ...customMaterials].sort(
+      (a, b) => a.orderIndex - b.orderIndex,
+    );
+  }, [dbMaterials, seedMaterialIds]);
+
+  const exercises = useMemo(() => {
+    const customExercises = dbExercises.filter(
+      (exercise) => !seedExerciseIds.has(exercise.id),
+    );
+    return [...(seedExercises as Exercise[]), ...customExercises].sort(
+      (a, b) => a.orderIndex - b.orderIndex,
+    );
+  }, [dbExercises, seedExerciseIds]);
 
   const submissions = useMemo(
     () => (data?.submissions ?? []) as Submission[],
@@ -77,65 +99,6 @@ export default function LearnPage() {
       router.replace("/login");
     }
   }, [router, session]);
-
-  useEffect(() => {
-    async function seed() {
-      if (seededRef.current) return;
-      if (!data) return;
-      if (dbMaterials.length > 0 && dbExercises.length > 0) {
-        seededRef.current = true;
-        return;
-      }
-      // Students don't have write permissions for materials/exercises.
-      // We show local fallback content immediately and only try writing seeds
-      // when an admin is logged in.
-      if (session?.role !== "admin") {
-        seededRef.current = true;
-        setSeedNotice("Showing starter materials from local fallback content.");
-        return;
-      }
-
-      const txChunks: unknown[] = [];
-      const materialIds = new Set(dbMaterials.map((item) => item.id));
-      const exerciseIds = new Set(dbExercises.map((item) => item.id));
-
-      for (const material of seedMaterials) {
-        if (materialIds.has(material.id)) continue;
-        txChunks.push(
-          db.tx.materials[material.id].update({
-            title: material.title,
-            content: material.content,
-            orderIndex: material.orderIndex,
-            createdAt: new Date(),
-          }),
-        );
-      }
-
-      for (const exercise of seedExercises) {
-        if (exerciseIds.has(exercise.id)) continue;
-        txChunks.push(
-          db.tx.exercises[exercise.id].update({
-            materialId: exercise.materialId,
-            prompt: exercise.prompt,
-            starterCode: exercise.starterCode,
-            expectedOutput: exercise.expectedOutput,
-            testCasesJson: exercise.testCasesJson,
-            orderIndex: exercise.orderIndex,
-          }),
-        );
-      }
-
-      if (txChunks.length > 0) {
-        await db.transact(txChunks as never[]);
-      }
-      seededRef.current = true;
-    }
-
-    seed().catch((seedError) => {
-      console.error(seedError);
-      setSeedNotice("Showing starter materials from local fallback content.");
-    });
-  }, [data, dbMaterials, dbExercises, session]);
 
   const submissionsByExercise = useMemo(() => {
     const map = new Map<string, Submission>();
@@ -255,12 +218,6 @@ export default function LearnPage() {
       {saveMessage ? (
         <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
           {saveMessage}
-        </p>
-      ) : null}
-
-      {seedNotice ? (
-        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-          {seedNotice}
         </p>
       ) : null}
 
