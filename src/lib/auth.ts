@@ -245,6 +245,13 @@ export async function createAdminUser(params: {
     throw new Error("Email is already registered.");
   }
 
+  const isAllowlisted = resolveRoleByAllowlist({ nickname, email }) === "admin";
+  if (!isAllowlisted) {
+    throw new Error(
+      "Admin account creation is restricted. Your nickname or email must be pre-approved in .env.local.",
+    );
+  }
+
   const passwordHash = await hashPassword(password);
   const id = crypto.randomUUID();
 
