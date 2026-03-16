@@ -60,7 +60,7 @@ export default function Navbar() {
 
           {session?.role === "admin" && (
             <Link href="/admin/export" className={itemClass("/admin/export")}>
-              Admin Export
+              Admin Panel
             </Link>
           )}
 
