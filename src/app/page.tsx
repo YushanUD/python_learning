@@ -11,7 +11,7 @@ export default function Home() {
           Python Learning
         </h1>
         <p className="text-slate-600">
-          Professor: Yushan Liu
+          Professor: Dr. Yushan Liu
           <br />
           Term: Spring Semester
         </p>
