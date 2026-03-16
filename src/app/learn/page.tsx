@@ -275,7 +275,9 @@ export default function LearnPage() {
               <h2 className="text-xl font-semibold text-slate-900">
                 {material.orderIndex}. {material.title}
               </h2>
-              <p className="mt-2 text-slate-700">{material.content}</p>
+              <p className="mt-2 whitespace-pre-line text-slate-700">
+                {material.content}
+              </p>
             </div>
 
             <div className="space-y-4">
