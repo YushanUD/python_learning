@@ -163,7 +163,8 @@ export default function LearnPage() {
       throw new Error("Only student accounts can submit exercises.");
     }
 
-    const submissionId = `${session.id}-${exercise.id}`;
+    const submissionId =
+      submissionsByExercise.get(exercise.id)?.id ?? crypto.randomUUID();
     const now = new Date();
     const score = payload.result.score;
 
