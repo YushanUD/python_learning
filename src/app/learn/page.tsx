@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import ExerciseCard from "@/components/ExerciseCard";
 import { getSession, type SessionUser } from "@/lib/auth";
-import { db, ensureSeedData } from "@/lib/db";
+import { db, seedExercises, seedMaterials } from "@/lib/db";
 import type { FeedbackResult } from "@/lib/scoring";
 
 type Material = {
@@ -38,6 +38,7 @@ export default function LearnPage() {
   const router = useRouter();
   const [session] = useState<SessionUser | null>(() => getSession());
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [seedNotice, setSeedNotice] = useState<string | null>(null);
   const seededRef = useRef(false);
 
   const { data, isLoading, error } = db.useQuery({
@@ -47,7 +48,7 @@ export default function LearnPage() {
     scoreSummaries: {},
   });
 
-  const materials = useMemo(
+  const dbMaterials = useMemo(
     () =>
       ([...(data?.materials ?? [])] as Material[]).sort(
         (a, b) => a.orderIndex - b.orderIndex,
@@ -55,13 +56,16 @@ export default function LearnPage() {
     [data?.materials],
   );
 
-  const exercises = useMemo(
+  const dbExercises = useMemo(
     () =>
       ([...(data?.exercises ?? [])] as Exercise[]).sort(
         (a, b) => a.orderIndex - b.orderIndex,
       ),
     [data?.exercises],
   );
+
+  const materials = dbMaterials.length > 0 ? dbMaterials : (seedMaterials as Material[]);
+  const exercises = dbExercises.length > 0 ? dbExercises : (seedExercises as Exercise[]);
 
   const submissions = useMemo(
     () => (data?.submissions ?? []) as Submission[],
@@ -78,22 +82,60 @@ export default function LearnPage() {
     async function seed() {
       if (seededRef.current) return;
       if (!data) return;
-      if (materials.length > 0 && exercises.length > 0) {
+      if (dbMaterials.length > 0 && dbExercises.length > 0) {
         seededRef.current = true;
         return;
       }
-      await ensureSeedData({
-        materials: materials as Array<{ id: string }>,
-        exercises: exercises as Array<{ id: string }>,
-      });
+      // Students don't have write permissions for materials/exercises.
+      // We show local fallback content immediately and only try writing seeds
+      // when an admin is logged in.
+      if (session?.role !== "admin") {
+        seededRef.current = true;
+        setSeedNotice("Showing starter materials from local fallback content.");
+        return;
+      }
+
+      const txChunks: unknown[] = [];
+      const materialIds = new Set(dbMaterials.map((item) => item.id));
+      const exerciseIds = new Set(dbExercises.map((item) => item.id));
+
+      for (const material of seedMaterials) {
+        if (materialIds.has(material.id)) continue;
+        txChunks.push(
+          db.tx.materials[material.id].update({
+            title: material.title,
+            content: material.content,
+            orderIndex: material.orderIndex,
+            createdAt: new Date(),
+          }),
+        );
+      }
+
+      for (const exercise of seedExercises) {
+        if (exerciseIds.has(exercise.id)) continue;
+        txChunks.push(
+          db.tx.exercises[exercise.id].update({
+            materialId: exercise.materialId,
+            prompt: exercise.prompt,
+            starterCode: exercise.starterCode,
+            expectedOutput: exercise.expectedOutput,
+            testCasesJson: exercise.testCasesJson,
+            orderIndex: exercise.orderIndex,
+          }),
+        );
+      }
+
+      if (txChunks.length > 0) {
+        await db.transact(txChunks as never[]);
+      }
       seededRef.current = true;
     }
 
     seed().catch((seedError) => {
       console.error(seedError);
-      setSaveMessage("Could not seed starter materials. Please refresh.");
+      setSeedNotice("Showing starter materials from local fallback content.");
     });
-  }, [data, materials, exercises]);
+  }, [data, dbMaterials, dbExercises, session]);
 
   const submissionsByExercise = useMemo(() => {
     const map = new Map<string, Submission>();
@@ -134,8 +176,7 @@ export default function LearnPage() {
           feedback: payload.result.feedback,
           score,
           submittedAt: now,
-        })
-        .link({ user: session.id, exercise: exercise.id }),
+        }),
     ];
 
     const scoreByExercise = new Map<string, number>();
@@ -153,14 +194,12 @@ export default function LearnPage() {
       totalExercises > 0 ? Number((scoreSum / totalExercises).toFixed(2)) : 0;
 
     txChunks.push(
-      db.tx.scoreSummaries[session.id]
-        .update({
-          userId: session.id,
-          averageScore,
-          totalExercises,
-          lastSubmittedAt: now,
-        })
-        .link({ user: session.id }),
+      db.tx.scoreSummaries[session.id].update({
+        userId: session.id,
+        averageScore,
+        totalExercises,
+        lastSubmittedAt: now,
+      }),
     );
 
     await db.transact(txChunks as never[]);
@@ -215,6 +254,12 @@ export default function LearnPage() {
       {saveMessage ? (
         <p className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">
           {saveMessage}
+        </p>
+      ) : null}
+
+      {seedNotice ? (
+        <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+          {seedNotice}
         </p>
       ) : null}
 
