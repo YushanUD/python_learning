@@ -22,6 +22,13 @@ export type SignupInput = {
   password: string;
 };
 
+export type AdminSignupInput = {
+  name: string;
+  email: string;
+  nickname: string;
+  password: string;
+};
+
 type InstantDbRuntime = {
   tx: {
     users: Record<
@@ -201,6 +208,83 @@ export async function signupUser(params: {
   return sessionUser;
 }
 
+export async function createAdminUser(params: {
+  db: unknown;
+  existingUsers: AppUserRecord[];
+  input: AdminSignupInput;
+}) {
+  const { db, existingUsers, input } = params;
+  const instantDb = db as InstantDbRuntime;
+
+  const name = input.name.trim();
+  const email = input.email.trim().toLowerCase();
+  const nickname = sanitizeNickname(input.nickname);
+  const password = input.password;
+
+  if (!name || !email || !nickname || !password) {
+    throw new Error("All admin fields are required.");
+  }
+  if (password.length < 8) {
+    throw new Error("Password must be at least 8 characters.");
+  }
+  if (!email.includes("@")) {
+    throw new Error("Please provide a valid email address.");
+  }
+
+  const existingNickname = existingUsers.find(
+    (user) => user.nickname.toLowerCase() === nickname.toLowerCase(),
+  );
+  if (existingNickname) {
+    throw new Error("Nickname is already in use.");
+  }
+
+  const existingEmail = existingUsers.find(
+    (user) => user.email.toLowerCase() === email.toLowerCase(),
+  );
+  if (existingEmail) {
+    throw new Error("Email is already registered.");
+  }
+
+  const passwordHash = await hashPassword(password);
+  const id = crypto.randomUUID();
+
+  await instantDb.transact(
+    instantDb.tx.users[id].create({
+      name,
+      studentId: `ADMIN-${id.slice(0, 8)}`,
+      email,
+      nickname,
+      passwordHash,
+      role: "admin",
+      createdAt: new Date(),
+    }),
+  );
+
+  // Best-effort helper for local development convenience:
+  // append newly created admin nickname/email to .env.local when writable.
+  try {
+    await fetch("/api/admin-allowlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nickname, email }),
+    });
+  } catch {
+    // Ignore .env.local sync errors in environments like Vercel.
+  }
+
+  const sessionUser: SessionUser = {
+    id,
+    name,
+    studentId: `ADMIN-${id.slice(0, 8)}`,
+    email,
+    nickname,
+    role: "admin",
+  };
+
+  setSession(sessionUser);
+  return sessionUser;
+}
+
 export async function loginUser(params: {
   db: unknown;
   existingUsers: AppUserRecord[];
@@ -223,10 +307,13 @@ export async function loginUser(params: {
     throw new Error("Nickname or password is incorrect.");
   }
 
-  const computedRole = resolveRoleByAllowlist({
-    nickname: user.nickname,
-    email: user.email,
-  });
+  const computedRole =
+    user.role === "admin"
+      ? "admin"
+      : resolveRoleByAllowlist({
+          nickname: user.nickname,
+          email: user.email,
+        });
 
   if (computedRole !== user.role) {
     await instantDb.transact(

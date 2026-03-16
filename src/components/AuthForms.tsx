@@ -3,9 +3,14 @@
 import { FormEvent, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { db } from "@/lib/db";
-import { loginUser, signupUser, type AppUserRecord } from "@/lib/auth";
+import {
+  createAdminUser,
+  loginUser,
+  signupUser,
+  type AppUserRecord,
+} from "@/lib/auth";
 
-type FormMode = "signup" | "login";
+type FormMode = "signup" | "adminSignup" | "login";
 
 export default function AuthForms() {
   const router = useRouter();
@@ -22,6 +27,12 @@ export default function AuthForms() {
   });
 
   const [loginForm, setLoginForm] = useState({
+    nickname: "",
+    password: "",
+  });
+  const [adminForm, setAdminForm] = useState({
+    name: "",
+    email: "",
     nickname: "",
     password: "",
   });
@@ -86,6 +97,29 @@ export default function AuthForms() {
     }
   }
 
+  async function handleAdminSignup(event: FormEvent) {
+    event.preventDefault();
+    setError(null);
+    setLoading(true);
+
+    try {
+      const session = await createAdminUser({
+        db,
+        existingUsers: users,
+        input: adminForm,
+      });
+      router.push(session.role === "admin" ? "/admin/export" : "/learn");
+    } catch (adminSignupError) {
+      const message =
+        adminSignupError instanceof Error
+          ? adminSignupError.message
+          : "Admin sign-up failed. Please try again.";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (usersError) {
     return (
       <p className="rounded-md border border-red-200 bg-red-50 p-4 text-red-700">
@@ -118,6 +152,17 @@ export default function AuthForms() {
           }`}
         >
           Student / Admin Login
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("adminSignup")}
+          className={`rounded-md px-3 py-2 text-sm font-medium ${
+            mode === "adminSignup"
+              ? "bg-indigo-600 text-white"
+              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+          }`}
+        >
+          Create Admin Account
         </button>
       </div>
 
@@ -207,6 +252,86 @@ export default function AuthForms() {
           >
             {loading ? "Creating account..." : "Create Student Account"}
           </button>
+        </form>
+      ) : mode === "adminSignup" ? (
+        <form onSubmit={handleAdminSignup} className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span className="text-slate-700">Full name</span>
+              <input
+                required
+                value={adminForm.name}
+                onChange={(event) =>
+                  setAdminForm((prev) => ({ ...prev, name: event.target.value }))
+                }
+                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-slate-700">Email</span>
+              <input
+                required
+                type="email"
+                value={adminForm.email}
+                onChange={(event) =>
+                  setAdminForm((prev) => ({ ...prev, email: event.target.value }))
+                }
+                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-slate-700">Nickname</span>
+              <input
+                required
+                value={adminForm.nickname}
+                onChange={(event) =>
+                  setAdminForm((prev) => ({
+                    ...prev,
+                    nickname: event.target.value,
+                  }))
+                }
+                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="text-slate-700">Password (minimum 8 characters)</span>
+              <input
+                required
+                minLength={8}
+                type="password"
+                value={adminForm.password}
+                onChange={(event) =>
+                  setAdminForm((prev) => ({
+                    ...prev,
+                    password: event.target.value,
+                  }))
+                }
+                className="w-full rounded-md border border-slate-300 px-3 py-2 focus:border-blue-500 focus:outline-none"
+              />
+            </label>
+          </div>
+
+          <p className="text-xs text-slate-500">
+            This creates an admin user and attempts to add nickname/email to
+            local `.env.local` automatically.
+          </p>
+
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setMode("signup")}
+              className="rounded-md border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+            >
+              Create Student Account
+            </button>
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {loading ? "Creating admin account..." : "Create Admin Account"}
+            </button>
+          </div>
         </form>
       ) : (
         <form onSubmit={handleLogin} className="space-y-4">
