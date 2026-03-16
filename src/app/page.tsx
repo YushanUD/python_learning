@@ -5,13 +5,13 @@ export default function Home() {
     <section className="grid gap-8 rounded-xl border border-slate-200 bg-white p-8 shadow-sm md:grid-cols-[2fr_1fr]">
       <div className="space-y-5">
         <p className="text-sm font-medium uppercase tracking-wide text-blue-600">
-          CS-101 Introduction to Python
+          MISY 225 Introduction to Python
         </p>
         <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
           Python Learning
         </h1>
         <p className="text-slate-600">
-          Professor: Dr. Chen Li
+          Professor: Yushan Liu
           <br />
           Term: Spring Semester
         </p>
