@@ -111,7 +111,6 @@ export default function AdminExportPage() {
     }
 
     return users.map((user) => ({
-      id: user.id,
       name: user.name,
       studentId: user.studentId,
       nickname: user.nickname,
